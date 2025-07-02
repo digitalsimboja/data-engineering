@@ -4,7 +4,8 @@
   "environment_variables": {
     "CATEGORIZATION_GLUE_JOB": "data-categorization-job",
     "SEGMENTATION_GLUE_JOB": "data-segmentation-job",
-    "AWS_REGION": "eu-west-1"
+    "AWS_REGION": "eu-west-1",
+    "CATEGORIZATION_LAMBDA_FUNCTION_NAME": "data-categorization-api"
   },
   "stages": {
     "dev": {

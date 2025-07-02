@@ -27,6 +27,7 @@ app.debug = True
 CATEGORIZATION_GLUE_JOB = os.environ.get("CATEGORIZATION_GLUE_JOB", "data-categorization-job")
 SEGMENTATION_GLUE_JOB = os.environ.get("SEGMENTATION_GLUE_JOB", "data-segmentation-job")
 AWS_REGION = os.environ.get("AWS_REGION", "eu-west-1")
+CATEGORIZATION_LAMBDA_FUNCTION_NAME = os.environ.get("CATEGORIZATION_LAMBDA_FUNCTION_NAME", "data-categorization-api")
 
 # AWS clients with profile
 aws_profile = os.environ.get("AWS_PROFILE", "dev")
@@ -91,8 +92,8 @@ def categorize():
         response = glue_client.start_job_run(
             JobName=CATEGORIZATION_GLUE_JOB,
             Arguments={
-                '--s3_input_path': s3_path,
-                '--operation': 'categorize'
+                '--S3_FILE_PATH': s3_path,
+                '--LAMBDA_FUNCTION_NAME': CATEGORIZATION_LAMBDA_FUNCTION_NAME
             }
         )
         
@@ -101,13 +102,16 @@ def categorize():
         
         # Wait for job completion (optional - you might want to make this asynchronous)
         # For now, we'll return immediately and let the frontend poll for results
-        return {
-            "message": "Categorization Glue job started successfully",
-            "jobRunId": job_run_id,
-            "status": "STARTED",
-            "segmentedRows": [],  # Empty for now, will be populated when job completes
-            "columns": []
-        }
+        return Response(
+            body={
+                "message": "Categorization Glue job started successfully",
+                "jobRunId": job_run_id,
+                "status": "STARTED",
+                "segmentedRows": [],
+                "columns": []
+            },
+            status_code=200
+        )
         
     except glue_client.exceptions.EntityNotFoundException:
         logger.error(f"Glue job not found: {CATEGORIZATION_GLUE_JOB}")
@@ -161,17 +165,49 @@ def get_job_status(job_run_id):
         
         logger.info(f"Job {job_run_id} status: {status}")
         
-        # If job is completed, try to get results from S3
+        # If job is completed, try to get results from DynamoDB
         if status == 'SUCCEEDED':
-            # You would typically read results from S3 here
-            # For now, return a placeholder
-            return {
-                "jobRunId": job_run_id,
-                "status": status,
-                "message": "Job completed successfully",
-                "segmentedRows": [],  # This would be populated from S3
-                "columns": []
-            }
+            try:
+                # Get results from DynamoDB
+                dynamodb = boto3.resource('dynamodb')
+                table = dynamodb.Table('data-categorization-file-metadata')
+                
+                # Query DynamoDB for the job results
+                response = table.scan(
+                    FilterExpression=boto3.dynamodb.conditions.Attr('job_name').eq(CATEGORIZATION_GLUE_JOB)
+                )
+                
+                items = response.get('Items', [])
+                if items:
+                    # Get the most recent result
+                    latest_item = max(items, key=lambda x: x.get('timestamp', ''))
+                    
+                    return {
+                        "jobRunId": job_run_id,
+                        "status": status,
+                        "message": "Job completed successfully",
+                        "suggestedCategories": latest_item.get('suggested_categories', []),
+                        "generatedScriptPath": latest_item.get('generated_script_path', ''),
+                        "segmentedRows": [],  # For categorization, this is empty
+                        "columns": latest_item.get('suggested_categories', [])
+                    }
+                else:
+                    return {
+                        "jobRunId": job_run_id,
+                        "status": status,
+                        "message": "Job completed successfully but no results found",
+                        "segmentedRows": [],
+                        "columns": []
+                    }
+            except Exception as e:
+                logger.error(f"Error retrieving results from DynamoDB: {str(e)}")
+                return {
+                    "jobRunId": job_run_id,
+                    "status": status,
+                    "message": "Job completed successfully",
+                    "segmentedRows": [],
+                    "columns": []
+                }
         elif status in ['FAILED', 'STOPPED', 'TIMEOUT']:
             return Response(
                 body={
