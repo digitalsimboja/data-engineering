@@ -1,9 +1,15 @@
 {
   "version": "2.0",
   "app_name": "data-segmentation-api",
+  "environment_variables": {
+    "CATEGORIZATION_GLUE_JOB": "data-categorization-job",
+    "SEGMENTATION_GLUE_JOB": "data-segmentation-job",
+    "AWS_REGION": "eu-west-1"
+  },
   "stages": {
     "dev": {
-      "api_gateway_stage": "api"
+      "api_gateway_stage": "api",
+      "iam_policy_file": "policy.json"
     }
   }
 }
