@@ -28,7 +28,7 @@ app.debug = True
 # Environment variables
 CATEGORIZATION_GLUE_JOB = os.environ.get("CATEGORIZATION_GLUE_JOB", "data-categorization-job")
 SEGMENTATION_GLUE_JOB = os.environ.get("SEGMENTATION_GLUE_JOB", "data-segmentation-job")
-AWS_REGION = os.environ.get("AWS_REGION", "eu-west-1")
+REGION_NAME = os.environ.get("AWS_REGION_NAME", "eu-west-1")
 CATEGORIZATION_LAMBDA_FUNCTION_NAME = os.environ.get("CATEGORIZATION_LAMBDA_FUNCTION_NAME", "data-categorization-bedrock-api")
 
 # AWS clients with profile
@@ -37,14 +37,14 @@ aws_profile = os.environ.get("AWS_PROFILE", "dev")
 try:
     # Use the specified AWS profile
     session = boto3.Session(profile_name=aws_profile)
-    glue_client = session.client("glue", region_name=AWS_REGION)
-    s3_client = session.client("s3", region_name=AWS_REGION)
+    glue_client = session.client("glue", region_name=REGION_NAME)
+    s3_client = session.client("s3", region_name=REGION_NAME)
     logger.info(f"Using AWS profile: {aws_profile}")
 except Exception as e:
     logger.error(f"Error creating AWS session with profile {aws_profile}: {str(e)}")
     # Fallback to default credential chain
-    glue_client = boto3.client("glue", region_name=AWS_REGION)
-    s3_client = boto3.client("s3", region_name=AWS_REGION)
+    glue_client = boto3.client("glue", region_name=REGION_NAME)
+    s3_client = boto3.client("s3", region_name=REGION_NAME)
 
 
 @app.route('/')
@@ -385,7 +385,7 @@ def categorize_with_bedrock(event, context):
         logger.info(f"Schema: {schema}")
         
         # Initialize Bedrock client
-        bedrock_client = boto3.client('bedrock-runtime', region_name=AWS_REGION)
+        bedrock_client = boto3.client('bedrock-runtime', region_name=REGION_NAME)
         
         # Prepare the prompt for categorization using template
         sample_data_str = json.dumps(data[:5], indent=2)  # Use first 5 records as sample
