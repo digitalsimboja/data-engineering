@@ -51,7 +51,9 @@
         "arn:aws:s3:::data-segmentation-*",
         "arn:aws:s3:::data-segmentation-*/*",
         "arn:aws:s3:::bojalabs-*",
-        "arn:aws:s3:::bojalabs-*/*"
+        "arn:aws:s3:::bojalabs-*/*",
+        "arn:aws:s3:::data-categorization-*",
+        "arn:aws:s3:::data-categorization-*/*"
       ]
     },
     {
@@ -95,6 +97,30 @@
       "Resource": [
         "arn:aws:lambda:*:*:function:data-categorization-*",
         "arn:aws:lambda:*:*:function:data-segmentation-*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/data-categorization-file-metadata"
       ]
     }
   ]

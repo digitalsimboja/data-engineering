@@ -4,6 +4,8 @@ import boto3
 import json
 import logging
 from dotenv import load_dotenv
+from datetime import datetime
+from prompt_templates import get_categorization_prompt, get_script_generation_prompt, get_script_template
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,7 +29,7 @@ app.debug = True
 CATEGORIZATION_GLUE_JOB = os.environ.get("CATEGORIZATION_GLUE_JOB", "data-categorization-job")
 SEGMENTATION_GLUE_JOB = os.environ.get("SEGMENTATION_GLUE_JOB", "data-segmentation-job")
 AWS_REGION = os.environ.get("AWS_REGION", "eu-west-1")
-CATEGORIZATION_LAMBDA_FUNCTION_NAME = os.environ.get("CATEGORIZATION_LAMBDA_FUNCTION_NAME", "data-categorization-api")
+CATEGORIZATION_LAMBDA_FUNCTION_NAME = os.environ.get("CATEGORIZATION_LAMBDA_FUNCTION_NAME", "data-categorization-bedrock-api")
 
 # AWS clients with profile
 aws_profile = os.environ.get("AWS_PROFILE", "dev")
@@ -353,3 +355,186 @@ def segmentation():
             },
             status_code=500
         )
+
+@app.lambda_function(name='data-categorization-bedrock-api')
+def categorize_with_bedrock(event, context):
+    """
+    Lambda function to categorize data using Amazon Bedrock
+    This function is invoked by the Glue job with sample data
+    """
+    
+    logger.info(f"Received event: {json.dumps(event)}")
+    
+    try:
+        # Extract data from the event
+        data = event.get('data', [])
+        schema = event.get('schema', [])
+        file_name = event.get('file_name', 'unknown')
+        
+        if not data:
+            logger.error("No data provided in the event")
+            return Response(
+                body={
+                    'error': 'No data provided',
+                    'message': 'Sample data is required for categorization'
+                },
+                status_code=400
+            )
+        
+        logger.info(f"Processing {len(data)} sample records for file: {file_name}")
+        logger.info(f"Schema: {schema}")
+        
+        # Initialize Bedrock client
+        bedrock_client = boto3.client('bedrock-runtime', region_name=AWS_REGION)
+        
+        # Prepare the prompt for categorization using template
+        sample_data_str = json.dumps(data[:5], indent=2)  # Use first 5 records as sample
+        schema_str = json.dumps(schema, indent=2)
+        
+        categorization_prompt = get_categorization_prompt(sample_data_str, schema_str)
+        
+        # Call Bedrock with Claude model for categorization
+        logger.info("Calling Amazon Bedrock for categorization...")
+        
+        response = bedrock_client.invoke_model(
+            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
+            body=json.dumps({
+                'prompt': f'\n\nHuman: {categorization_prompt}\n\nAssistant:',
+                'max_tokens': 2000,
+                'temperature': 0.1,
+                'top_p': 0.9
+            })
+        )
+        
+        response_body = json.loads(response['body'].read())
+        completion = response_body['completion']
+        
+        logger.info(f"Bedrock categorization response: {completion}")
+        
+        # Parse the response to extract JSON
+        try:
+            # Find JSON in the response
+            start_idx = completion.find('{')
+            end_idx = completion.rfind('}') + 1
+            
+            if start_idx != -1 and end_idx != -1:
+                json_str = completion[start_idx:end_idx]
+                categorization_result = json.loads(json_str)
+            else:
+                raise ValueError("No JSON found in response")
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON from Bedrock response: {e}")
+            # Fallback: create basic categories based on schema
+            categorization_result = {
+                "suggested_categories": schema[:3] if len(schema) >= 3 else schema,
+                "reasoning": "Fallback categorization based on available columns",
+                "segmentation_criteria": {}
+            }
+        
+        # Generate a Glue script using Bedrock
+        script_generation_prompt = get_script_generation_prompt(
+            schema, 
+            categorization_result.get('suggested_categories', []),
+            categorization_result.get('segmentation_criteria', {}),
+            sample_data_str
+        )
+        
+        # Call Bedrock to generate the Glue script
+        logger.info("Calling Amazon Bedrock for script generation...")
+        
+        script_response = bedrock_client.invoke_model(
+            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
+            body=json.dumps({
+                'prompt': f'\n\nHuman: {script_generation_prompt}\n\nAssistant:',
+                'max_tokens': 4000,
+                'temperature': 0.1,
+                'top_p': 0.9
+            })
+        )
+        
+        script_response_body = json.loads(script_response['body'].read())
+        script_completion = script_response_body['completion']
+        
+        logger.info(f"Bedrock script generation response: {script_completion}")
+        
+        # Extract the generated script (remove any markdown formatting)
+        glue_script = script_completion.strip()
+        if glue_script.startswith('```python'):
+            glue_script = glue_script[9:]
+        if glue_script.endswith('```'):
+            glue_script = glue_script[:-3]
+        glue_script = glue_script.strip()
+        
+        # Store results in DynamoDB
+        timestamp = datetime.now().isoformat()
+        file_id = f"{file_name}_{timestamp}"
+        
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table('data-categorization-file-metadata')
+        
+        # Generate S3 path for the script
+        script_key = f"glue-scripts/segmentation-script-{timestamp}.py"
+        script_path = f"s3://data-categorization-temp/{script_key}"
+        
+        # Store metadata in DynamoDB
+        table.put_item(Item={
+            'file_id': file_id,
+            'file_name': file_name,
+            'timestamp': timestamp,
+            'job_name': CATEGORIZATION_GLUE_JOB,
+            'suggested_categories': categorization_result.get('suggested_categories', []),
+            'reasoning': categorization_result.get('reasoning', ''),
+            'segmentation_criteria': categorization_result.get('segmentation_criteria', {}),
+            'generated_script_path': script_path,
+            'sample_data_count': len(data),
+            'schema': schema
+        })
+        
+        # Upload the generated script to S3
+        s3_client.put_object(
+            Bucket='data-categorization-temp',
+            Key=script_key,
+            Body=glue_script,
+            ContentType='text/x-python'
+        )
+        
+        logger.info(f"Results stored in DynamoDB with file_id: {file_id}")
+        logger.info(f"Generated script uploaded to: {script_path}")
+        
+        return Response(
+            body={
+                'suggested_categories': categorization_result.get('suggested_categories', []),
+                'reasoning': categorization_result.get('reasoning', ''),
+                'segmentation_criteria': categorization_result.get('segmentation_criteria', {}),
+                'generated_glue_script': glue_script,
+                's3_script_path': script_path,
+                'file_id': file_id,
+                'message': 'Categorization completed successfully'
+            },
+            status_code=200
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in categorization Lambda: {str(e)}")
+        return Response(
+            body={
+                'error': 'Internal server error',
+                'message': str(e)
+            },
+            status_code=500
+        )
+
+
+def generate_glue_segmentation_script(schema, categories, criteria):
+    """
+    Generate a Glue script for data segmentation based on suggested categories
+    This function is kept for backward compatibility but now uses the template
+    """
+    script_template = get_script_template()
+    
+    # Replace placeholders in the template
+    script = script_template.replace('{categories}', json.dumps(categories))
+    script = script.replace('{segmentation_criteria}', json.dumps(criteria))
+    
+    return script
