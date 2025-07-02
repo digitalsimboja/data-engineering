@@ -246,20 +246,65 @@ def get_job_status(job_run_id):
             status_code=500
         )
 
-@app.route('/segmentation')
+@app.route('/segmentation', methods=['POST'], cors=cors_config)
 def segmentation():
     request = app.current_request
-    body = request.json_body
+    body = request.json_body or {}
+    
+    logger.info(f"Segmentation request received: {body}")
     
     s3_path = body.get("s3FilePath")
     if not s3_path:
+        logger.error("Missing s3FilePath in request")
         return Response(
             body={
-            "error": "Missing s3FilePath"
+                "error": "Missing s3FilePath parameter",
+                "details": "Please provide the S3 path to the file you want to segment"
             },
             status_code=400
         )
+    
+    # Validate S3 path format
+    if not s3_path.startswith("s3://"):
+        logger.error(f"Invalid S3 path format: {s3_path}")
+        return Response(
+            body={
+                "error": "Invalid S3 path format",
+                "details": "S3 path must start with 's3://'"
+            },
+            status_code=400
+        )
+    
+    # Validate S3 file exists
     try:
+        bucket_name, key = s3_path.replace("s3://", "").split("/", 1)
+        s3_client.head_object(Bucket=bucket_name, Key=key)
+        logger.info(f"S3 file exists: {s3_path}")
+    except s3_client.exceptions.NoSuchKey:
+        logger.error(f"S3 file not found: {s3_path}")
+        return Response(
+            body={
+                "error": "S3 file not found",
+                "details": f"The file '{s3_path}' does not exist in S3. Please check the file path and ensure the file has been uploaded.",
+                "type": "s3"
+            },
+            status_code=404
+        )
+    except s3_client.exceptions.ClientError as e:
+        logger.error(f"S3 client error: {str(e)}")
+        return Response(
+            body={
+                "error": "S3 access error",
+                "details": f"Unable to access S3 file: {str(e)}",
+                "type": "s3"
+            },
+            status_code=500
+        )
+    
+    try:
+        logger.info(f"Starting Glue job: {SEGMENTATION_GLUE_JOB}")
+        logger.info(f"S3 input path: {s3_path}")
+        
         response = glue_client.start_job_run(
             JobName=SEGMENTATION_GLUE_JOB,
             Arguments={
@@ -267,14 +312,44 @@ def segmentation():
             }
         )
         
-        return {
-            "message": "Glue job started",
-            "jobRunId": response["JobRunId"]
-        }
-    except Exception as e:
+        job_run_id = response["JobRunId"]
+        logger.info(f"Segmentation Glue job started successfully. JobRunId: {job_run_id}")
+        
         return Response(
             body={
-                "error": str(e)
+                "message": "Segmentation Glue job started successfully",
+                "jobRunId": job_run_id,
+                "status": "STARTED"
+            },
+            status_code=200
+        )
+    except glue_client.exceptions.EntityNotFoundException:
+        logger.error(f"Glue job not found: {SEGMENTATION_GLUE_JOB}")
+        return Response(
+            body={
+                "error": "Glue job not found",
+                "details": f"The Glue job '{SEGMENTATION_GLUE_JOB}' does not exist. Please check your configuration.",
+                "type": "glue"
+            },
+            status_code=500
+        )
+    except glue_client.exceptions.ClientError as e:
+        logger.error(f"AWS Glue client error: {str(e)}")
+        return Response(
+            body={
+                "error": "AWS Glue service error",
+                "details": str(e),
+                "type": "glue"
+            },
+            status_code=500
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during segmentation: {str(e)}")
+        return Response(
+            body={
+                "error": "Internal server error",
+                "details": "An unexpected error occurred during segmentation",
+                "type": "server"
             },
             status_code=500
         )
