@@ -39,12 +39,14 @@ try:
     session = boto3.Session(profile_name=aws_profile)
     glue_client = session.client("glue", region_name=REGION_NAME)
     s3_client = session.client("s3", region_name=REGION_NAME)
+    bedrock_client = session.client("bedrock-runtime", region_name=REGION_NAME)
     logger.info(f"Using AWS profile: {aws_profile}")
 except Exception as e:
     logger.error(f"Error creating AWS session with profile {aws_profile}: {str(e)}")
     # Fallback to default credential chain
     glue_client = boto3.client("glue", region_name=REGION_NAME)
     s3_client = boto3.client("s3", region_name=REGION_NAME)
+    bedrock_client = boto3.client("bedrock-runtime", region_name=REGION_NAME)
 
 
 @app.route('/')
@@ -170,8 +172,8 @@ def get_job_status(job_run_id):
         # If job is completed, try to get results from DynamoDB
         if status == 'SUCCEEDED':
             try:
-                # Get results from DynamoDB
-                dynamodb = boto3.resource('dynamodb')
+                # Get results from DynamoDB using the same session configuration
+                dynamodb = session.resource('dynamodb', region_name=REGION_NAME)
                 table = dynamodb.Table('data-categorization-file-metadata')
                 
                 # Query DynamoDB for the job results
@@ -373,19 +375,13 @@ def categorize_with_bedrock(event, context):
         
         if not data:
             logger.error("No data provided in the event")
-            return Response(
-                body={
-                    'error': 'No data provided',
-                    'message': 'Sample data is required for categorization'
-                },
-                status_code=400
-            )
+            return {
+                'error': 'No data provided',
+                'message': 'Sample data is required for categorization'
+            }
         
         logger.info(f"Processing {len(data)} sample records for file: {file_name}")
         logger.info(f"Schema: {schema}")
-        
-        # Initialize Bedrock client
-        bedrock_client = boto3.client('bedrock-runtime', region_name=REGION_NAME)
         
         # Prepare the prompt for categorization using template
         sample_data_str = json.dumps(data[:5], indent=2)  # Use first 5 records as sample
@@ -470,7 +466,8 @@ def categorize_with_bedrock(event, context):
         timestamp = datetime.now().isoformat()
         file_id = f"{file_name}_{timestamp}"
         
-        dynamodb = boto3.resource('dynamodb')
+        # Use the same session configuration for DynamoDB
+        dynamodb = session.resource('dynamodb', region_name=REGION_NAME)
         table = dynamodb.Table('data-categorization-file-metadata')
         
         # Generate S3 path for the script
@@ -502,28 +499,22 @@ def categorize_with_bedrock(event, context):
         logger.info(f"Results stored in DynamoDB with file_id: {file_id}")
         logger.info(f"Generated script uploaded to: {script_path}")
         
-        return Response(
-            body={
-                'suggested_categories': categorization_result.get('suggested_categories', []),
-                'reasoning': categorization_result.get('reasoning', ''),
-                'segmentation_criteria': categorization_result.get('segmentation_criteria', {}),
-                'generated_glue_script': glue_script,
-                's3_script_path': script_path,
-                'file_id': file_id,
-                'message': 'Categorization completed successfully'
-            },
-            status_code=200
-        )
+        return {
+            'suggested_categories': categorization_result.get('suggested_categories', []),
+            'reasoning': categorization_result.get('reasoning', ''),
+            'segmentation_criteria': categorization_result.get('segmentation_criteria', {}),
+            'generated_glue_script': glue_script,
+            's3_script_path': script_path,
+            'file_id': file_id,
+            'message': 'Categorization completed successfully'
+        }
         
     except Exception as e:
         logger.error(f"Error in categorization Lambda: {str(e)}")
-        return Response(
-            body={
-                'error': 'Internal server error',
-                'message': str(e)
-            },
-            status_code=500
-        )
+        return {
+            'error': 'Internal server error',
+            'message': str(e)
+        }
 
 
 def generate_glue_segmentation_script(schema, categories, criteria):
