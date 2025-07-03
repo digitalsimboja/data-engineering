@@ -5,7 +5,7 @@ import json
 import logging
 from dotenv import load_dotenv
 from datetime import datetime
-from prompt_templates import get_categorization_prompt, get_script_generation_prompt, get_script_template
+from chalicelib.utils.prompt_templates import get_categorization_prompt, get_script_generation_prompt, get_script_template
 
 # Load environment variables from .env file
 load_dotenv()
@@ -32,21 +32,10 @@ REGION_NAME = os.environ.get("AWS_REGION_NAME", "eu-west-1")
 CATEGORIZATION_LAMBDA_FUNCTION_NAME = os.environ.get("CATEGORIZATION_LAMBDA_FUNCTION_NAME", "data-categorization-bedrock-api")
 
 # AWS clients with profile
-aws_profile = os.environ.get("AWS_PROFILE", "dev")
-
-try:
-    # Use the specified AWS profile
-    session = boto3.Session(profile_name=aws_profile)
-    glue_client = session.client("glue", region_name=REGION_NAME)
-    s3_client = session.client("s3", region_name=REGION_NAME)
-    bedrock_client = session.client("bedrock-runtime", region_name=REGION_NAME)
-    logger.info(f"Using AWS profile: {aws_profile}")
-except Exception as e:
-    logger.error(f"Error creating AWS session with profile {aws_profile}: {str(e)}")
-    # Fallback to default credential chain
-    glue_client = boto3.client("glue", region_name=REGION_NAME)
-    s3_client = boto3.client("s3", region_name=REGION_NAME)
-    bedrock_client = boto3.client("bedrock-runtime", region_name=REGION_NAME)
+glue_client = boto3.client("glue", region_name=REGION_NAME)
+s3_client = boto3.client("s3", region_name=REGION_NAME)
+bedrock_client = boto3.client("bedrock-runtime", region_name=REGION_NAME)
+dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
 
 
 @app.route('/')
@@ -393,7 +382,7 @@ def categorize_with_bedrock(event, context):
         logger.info("Calling Amazon Bedrock for categorization...")
         
         response = bedrock_client.invoke_model(
-            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
+            modelId = "anthropic.claude-3-5-sonnet-20240620-v1:0",
             body=json.dumps({
                 'prompt': f'\n\nHuman: {categorization_prompt}\n\nAssistant:',
                 'max_tokens': 2000,

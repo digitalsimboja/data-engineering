@@ -13,31 +13,22 @@
     {
       "Effect": "Allow",
       "Action": [
-        "glue:StartJobRun",
-        "glue:GetJobRun",
-        "glue:GetJobRuns",
-        "glue:BatchGetJobs",
-        "glue:GetJob"
+        "lambda:InvokeFunction"
       ],
       "Resource": [
-        "arn:aws:glue:*:*:job/*"
+        "arn:aws:lambda:*:*:function:data-categorization-*",
+        "arn:aws:lambda:*:*:function:data-segmentation-*"
       ]
     },
     {
       "Effect": "Allow",
       "Action": [
-        "glue:GetDatabase",
-        "glue:GetDatabases",
-        "glue:GetTable",
-        "glue:GetTables",
-        "glue:GetPartition",
-        "glue:GetPartitions"
+        "glue:StartJobRun",
+        "glue:GetJobRun",
+        "glue:GetJobRuns",
+        "glue:GetJob"
       ],
-      "Resource": [
-        "arn:aws:glue:*:*:catalog",
-        "arn:aws:glue:*:*:database/*",
-        "arn:aws:glue:*:*:table/*"
-      ]
+      "Resource": "arn:aws:glue:*:*:job/*"
     },
     {
       "Effect": "Allow",
@@ -51,53 +42,18 @@
         "arn:aws:s3:::data-segmentation-*",
         "arn:aws:s3:::data-segmentation-*/*",
         "arn:aws:s3:::bojalabs-*",
-        "arn:aws:s3:::bojalabs-*/*",
-        "arn:aws:s3:::data-categorization-*",
-        "arn:aws:s3:::data-categorization-*/*"
+        "arn:aws:s3:::bojalabs-*/*"
       ]
     },
     {
       "Effect": "Allow",
       "Action": [
-        "iam:PassRole"
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Scan"
       ],
-      "Resource": [
-        "arn:aws:iam::*:role/AWSGlueServiceRole*",
-        "arn:aws:iam::*:role/GlueServiceRole*"
-      ],
-      "Condition": {
-        "StringEquals": {
-          "iam:PassedToService": "glue.amazonaws.com"
-        }
-      }
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ec2:DescribeVpcs",
-        "ec2:DescribeSubnets",
-        "ec2:DescribeSecurityGroups"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "cloudwatch:PutMetricData",
-        "cloudwatch:GetMetricData",
-        "cloudwatch:GetMetricStatistics"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "lambda:InvokeFunction"
-      ],
-      "Resource": [
-        "arn:aws:lambda:*:*:function:data-categorization-*",
-        "arn:aws:lambda:*:*:function:data-segmentation-*"
-      ]
+      "Resource": "arn:aws:dynamodb:*:*:table/data-categorization-file-metadata"
     },
     {
       "Effect": "Allow",
@@ -105,24 +61,10 @@
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream"
       ],
-      "Resource": [
-        "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0",
-        "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0:*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
-        "dynamodb:DeleteItem",
-        "dynamodb:Query",
-        "dynamodb:Scan"
-      ],
-      "Resource": [
-        "arn:aws:dynamodb:*:*:table/data-categorization-file-metadata"
-      ]
+      "Resource": ["arn:aws:bedrock:eu-west-1::foundation-model/*",
+      "arn:aws:bedrock:eu-west-1:475453938538:inference-profile/*",
+      "arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0"
+    ]
     }
   ]
-} 
+}
