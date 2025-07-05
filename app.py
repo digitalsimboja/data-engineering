@@ -2,10 +2,14 @@ import os
 from chalice import Chalice, Response, CORSConfig
 import boto3
 import json
+import traceback
 import logging
 from dotenv import load_dotenv
 from datetime import datetime
 from chalicelib.utils.prompt_templates import get_categorization_prompt, get_script_generation_prompt, get_script_template
+
+# Create boto3 session
+session = boto3.Session()
 
 # Load environment variables from .env file
 load_dotenv()
@@ -354,23 +358,34 @@ def categorize_with_bedrock(event, context):
     This function is invoked by the Glue job with sample data
     """
     
-    logger.info(f"Received event: {json.dumps(event)}")
+    print(f"Event: {event}")
     
+    # Use fixed region to match Bedrock permissions
+    lambda_region = "eu-west-1"
+    
+    # Create Bedrock client with the fixed region
+    bedrock_client_local = boto3.client("bedrock-runtime", region_name=lambda_region)
+    
+    # Simple test to verify the function is working
     try:
         # Extract data from the event
         data = event.get('data', [])
         schema = event.get('schema', [])
         file_name = event.get('file_name', 'unknown')
         
+        print(f"Extracted data length: {len(data)}")
+        print(f"Extracted schema: {schema}")
+        print(f"Extracted file_name: {file_name}")
+        
         if not data:
-            logger.error("No data provided in the event")
+            print("No data provided in the event")
             return {
                 'error': 'No data provided',
                 'message': 'Sample data is required for categorization'
             }
         
-        logger.info(f"Processing {len(data)} sample records for file: {file_name}")
-        logger.info(f"Schema: {schema}")
+        print(f"Processing {len(data)} sample records for file: {file_name}")
+        print(f"Schema: {schema}")
         
         # Prepare the prompt for categorization using template
         sample_data_str = json.dumps(data[:5], indent=2)  # Use first 5 records as sample
@@ -379,22 +394,37 @@ def categorize_with_bedrock(event, context):
         categorization_prompt = get_categorization_prompt(sample_data_str, schema_str)
         
         # Call Bedrock with Claude model for categorization
-        logger.info("Calling Amazon Bedrock for categorization...")
+        print("Calling Amazon Bedrock for categorization...")
         
-        response = bedrock_client.invoke_model(
-            modelId = "anthropic.claude-3-5-sonnet-20240620-v1:0",
-            body=json.dumps({
-                'prompt': f'\n\nHuman: {categorization_prompt}\n\nAssistant:',
-                'max_tokens': 2000,
-                'temperature': 0.1,
-                'top_p': 0.9
-            })
+        model_id = f"arn:aws:bedrock:{lambda_region}:475453938538:inference-profile/eu.anthropic.claude-3-5-sonnet-20240620-v1:0"
+
+        # Construct Claude 3.5 compliant Messages API payload
+        body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": categorization_prompt  # plain string
+                }
+            ],
+            "max_tokens": 1024,
+            "temperature": 0.1,
+            "top_p": 0.9
+        }
+
+        response = bedrock_client_local.invoke_model(
+            modelId=model_id,
+            body=json.dumps(body),
+            contentType="application/json",
+            accept="application/json"
         )
         
-        response_body = json.loads(response['body'].read())
-        completion = response_body['completion']
-        
-        logger.info(f"Bedrock categorization response: {completion}")
+        print(f"Bedrock categorization response: {response}")
+
+        response_str = response['body'].read().decode('utf-8')
+        response_body = json.loads(response_str)
+
+        completion = response_body["content"][0]["text"]
         
         # Parse the response to extract JSON
         try:
@@ -409,7 +439,7 @@ def categorize_with_bedrock(event, context):
                 raise ValueError("No JSON found in response")
                 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from Bedrock response: {e}")
+            print(f"Failed to parse JSON from Bedrock response: {e}")
             # Fallback: create basic categories based on schema
             categorization_result = {
                 "suggested_categories": schema[:3] if len(schema) >= 3 else schema,
@@ -426,22 +456,31 @@ def categorize_with_bedrock(event, context):
         )
         
         # Call Bedrock to generate the Glue script
-        logger.info("Calling Amazon Bedrock for script generation...")
+        print("Calling Amazon Bedrock for script generation...")
+        body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": script_generation_prompt  # plain string
+                }
+            ],
+            "max_tokens": 1024,
+            "temperature": 0.1,
+            "top_p": 0.9
+        }
         
-        script_response = bedrock_client.invoke_model(
-            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
-            body=json.dumps({
-                'prompt': f'\n\nHuman: {script_generation_prompt}\n\nAssistant:',
-                'max_tokens': 4000,
-                'temperature': 0.1,
-                'top_p': 0.9
-            })
+                
+        script_response = bedrock_client_local.invoke_model(
+            modelId=model_id,
+            body=json.dumps(body),
+            contentType="application/json",
+            accept="application/json"
         )
+        response_str = script_response['body'].read().decode('utf-8')
+        script_response_body = json.loads(response_str)
+        script_completion = script_response_body["content"][0]["text"]
         
-        script_response_body = json.loads(script_response['body'].read())
-        script_completion = script_response_body['completion']
-        
-        logger.info(f"Bedrock script generation response: {script_completion}")
         
         # Extract the generated script (remove any markdown formatting)
         glue_script = script_completion.strip()
@@ -485,8 +524,8 @@ def categorize_with_bedrock(event, context):
             ContentType='text/x-python'
         )
         
-        logger.info(f"Results stored in DynamoDB with file_id: {file_id}")
-        logger.info(f"Generated script uploaded to: {script_path}")
+        print(f"Results stored in DynamoDB with file_id: {file_id}")
+        print(f"Generated script uploaded to: {script_path}")
         
         return {
             'suggested_categories': categorization_result.get('suggested_categories', []),
@@ -499,12 +538,12 @@ def categorize_with_bedrock(event, context):
         }
         
     except Exception as e:
-        logger.error(f"Error in categorization Lambda: {str(e)}")
+        print(f"Error in categorization Lambda: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
         return {
-            'error': 'Internal server error',
+            'error': 'Error in categorization Lambda',
             'message': str(e)
         }
-
 
 def generate_glue_segmentation_script(schema, categories, criteria):
     """

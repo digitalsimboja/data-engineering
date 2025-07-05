@@ -10,7 +10,14 @@
   "stages": {
     "dev": {
       "api_gateway_stage": "api",
-      "iam_policy_file": "policy.json"
+      "iam_policy_file": "policy.json",
+      "region": "eu-west-1",
+      "lambda_functions": {
+        "data-categorization-bedrock-api": {
+          "lambda_memory_size": 512,
+          "lambda_timeout": 300
+        }
+      }
     }
   }
 }

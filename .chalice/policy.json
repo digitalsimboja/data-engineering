@@ -41,8 +41,8 @@
       "Resource": [
         "arn:aws:s3:::data-segmentation-*",
         "arn:aws:s3:::data-segmentation-*/*",
-        "arn:aws:s3:::bojalabs-*",
-        "arn:aws:s3:::bojalabs-*/*"
+        "arn:aws:s3:::data-categorization-*",
+        "arn:aws:s3:::data-categorization-*/*"
       ]
     },
     {
@@ -61,10 +61,10 @@
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream"
       ],
-      "Resource": ["arn:aws:bedrock:eu-west-1::foundation-model/*",
-      "arn:aws:bedrock:eu-west-1:475453938538:inference-profile/*",
-      "arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0"
-    ]
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "arn:aws:bedrock:*:*:inference-profile/*"
+      ]
     }
   ]
 }
